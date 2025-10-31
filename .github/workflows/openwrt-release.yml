@@ -1,0 +1,232 @@
+name: Build OpenWrt Package
+
+on:
+  push:
+    branches:
+      # - main
+      - 'gh-pages'
+  # workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build for ${{ matrix.version }} / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    env:
+      # This shall be set as repo Settings -> Secrets -> Actions -> Repository secrets -> REPO_APK_KEY -> Paste the *whole* key including -----* PUBLIC KEY-----
+      REPO_APK_KEY: ${{ secrets.REPO_APK_KEY }}
+      # This shall be set as repo Settings -> Secrets -> Actions -> Repository secrets -> REPO_OPKG_KEY -> Paste the *whole* key including comment
+      REPO_OPKG_KEY: ${{ secrets.REPO_OPKG_KEY }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: openwrt-24.10
+            target: x86_64
+          - version: openwrt-24.10
+            target: aarch64_cortex-a53
+          # - version: openwrt-24.10
+          #   target: aarch64_generic
+          # - version: openwrt-24.10
+          #   target: arm_cortex-a7
+          # - version: openwrt-24.10
+          #   target: arm_cortex-a9
+          # - version: openwrt-24.10
+          #   target: mips_24kc
+          # - version: openwrt-24.10
+          #   target: mipsel_24kc
+          - version: snapshots
+            target: x86_64
+          - version: snapshots
+            target: aarch64_cortex-a53
+          # - version: snapshots
+          #   target: aarch64_generic
+          # - version: snapshots
+          #   target: arm_cortex-a7
+          # - version: snapshots
+          #   target: arm_cortex-a9
+          # - version: snapshots
+          #   target: mips_24kc
+          # - version: snapshots
+          #   target: mipsel_24kc
+
+    steps:
+      - name: 🧾 Check out repo
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          # path: feed
+          fetch-depth: 0
+          submodules: true
+          token: ${{ secrets.TOKEN }}
+
+      - name: Git Submodule Update
+        run: |
+          # git pull --recurse-submodules
+          git submodule update --remote --recursive
+
+      - name: Get PKG_NAMES and set up feed structure
+        run: |
+          set -x
+          folders=
+          for folder in luci*; do
+            folders="${folders:+$folders }${folder}"
+          done
+          echo PKG_NAMES="$folders" >> "$GITHUB_ENV"
+
+          # LuCI-style layout so package Makefile content "../../luci.mk" resolves from applications/<pkg>
+          for pkg in $folders; do
+            mkdir -p feed/luci/applications/${pkg}
+          done
+
+          # Add shim luci/luci.mk pointing to the official LuCI feed
+          printf 'include $(TOPDIR)/feeds/luci/luci.mk\n' > feed/luci/luci.mk
+
+          # - name: Set up ${{ github.actor }} feed structure
+          #   run: |
+          for pkg in ${folders}; do
+            # Create a proper OpenWrt feed layout where each package lives in its own subdir
+            mkdir -p feed/${pkg}
+            # Move the package sources into the feed subdir
+            mv -f $pkg feed/luci/applications/
+          done
+
+          # Also add a shim so ../../luci.mk from package/feeds/${{ github.actor }}/<pkg> works:
+          mkdir -p package
+          printf 'include $(TOPDIR)/feeds/luci/luci.mk\n' > package/luci.mk
+
+      - name: Display feed structure of files
+        run: ls -R
+
+      - name: Determine ARCH for build step
+        run: |
+          if [ "${{ matrix.version }}" = "snapshots" ]; then
+            echo "ARCH=${{ matrix.target }}-SNAPSHOT" >> "$GITHUB_ENV"
+          else
+            echo "ARCH=${{ matrix.target }}-${{ matrix.version }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: 🏗️ Build with OpenWrt SDK
+        uses: openwrt/gh-action-sdk@v8
+        env:
+          ARCH: ${{ env.ARCH }}
+          FEEDNAME: ${{ github.actor }}
+          PACKAGES: ${{ env.PKG_NAMES }}
+          INDEX: 1
+          FEED_DIR: ${{ github.workspace }}/feed
+          NO_SHFMT_CHECK: 1
+          NO_REFRESH_CHECK: 1
+          # Snapshot apk sign key
+          PRIVATE_KEY: ${{ secrets.REPO_APK_KEY }}
+          # 24.10 opkg sign key
+          KEY_BUILD: ${{ secrets.REPO_OPKG_KEY }}
+          # add no default feeds only if our packages have no deps therein
+          # NO_DEFAULT_FEEDS: 1
+
+      # - name: 🔍 Debug build output
+      #   run: |
+      #     echo "=== Build directory structure ==="
+      #     find . -name "*.ipk" -type f 2>/dev/null || echo "No .ipk files found"
+      #     echo "=== bin directory structure ==="
+      #     ls -la bin/ 2>/dev/null || echo "No bin directory found"
+      #     if [ -d "bin/packages" ]; then
+      #       echo "=== packages directory structure ==="
+      #       find bin/packages/ -type f -name "*.ipk" 2>/dev/null || echo "No .ipk files in packages directory"
+      #       echo "=== Full packages directory tree ==="
+      #       ls -laR bin/packages/ 2>/dev/null || echo "No packages directory"
+      #     fi
+
+      - name: Rename packages build output root "bin" folder to repo root i.e. "/bin" -> "/openwrt-24.10"
+        run: mv bin ${{ matrix.version }}
+
+      - name: 📦 Upload artifact for ${{ matrix.target }}
+        uses: actions/upload-artifact@v4
+        with:
+          # If a wildcard pattern is used, the path hierarchy will be preserved after the first wildcard pattern:
+          # path/to/*/directory/foo?.txt =>
+          #     ∟ path/to/some/directory/foo1.txt
+          #     ∟ path/to/some/directory/foo2.txt
+          #     ∟ path/to/other/directory/foo1.txt
+
+          # would be flattened and uploaded as =>
+          #     ∟ some/directory/foo1.txt
+          #     ∟ some/directory/foo2.txt
+          #     ∟ other/directory/foo1.txt
+          name: ${{ matrix.target }}-${{ matrix.version }}
+          path: |
+            */packages/${{ matrix.target }}/${{ github.actor }}/*.ipk
+            */packages/${{ matrix.target }}/${{ github.actor }}/*.apk
+            */packages/${{ matrix.target }}/${{ github.actor }}/Packages*
+            */packages/${{ matrix.target }}/${{ github.actor }}/index.json
+            */packages/${{ matrix.target }}/${{ github.actor }}/packages.adb
+            */packages/${{ matrix.target }}/${{ github.actor }}/packages.adb.asc
+          if-no-files-found: ignore
+
+  release:
+    name: Release ${{ github.repository }}
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+        with:
+          ref: 'gh-pages'
+          # lfs: true
+          submodules: true
+
+      - name: ⬇️ Download all build artifacts
+        uses: actions/download-artifact@v6
+        # This will get x86_64-openwrt-24.10.zip and x86_64-snapshot.zip etc
+        # and put them into ./ producing "/openwrt-24.10/packages/..." and "snapshots/packages/..."
+        with:
+          merge-multiple: true
+          path: ./
+
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - name: Display current path
+        run: pwd
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.1' # Not needed with a .ruby-version file
+          bundler-cache: true # runs 'bundle install' and caches installed gems automatically
+          cache-version: 0 # Increment this number if you need to re-download cached gems
+
+      - name: 🆕 Refresh index.md files in repo folders
+        run: ./prenodes.sh
+
+      - name: Set up Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: ⚒️ Build with Jekyll
+        # Outputs to the './_site' directory by default
+        run: bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
+        env:
+          JEKYLL_ENV: production
+
+      - name: 📦 Upload artifact
+        # Automatically uploads an artifact from the './_site' directory by default
+        uses: actions/upload-pages-artifact@v4
+
+  # Deployment job
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: 📦 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
