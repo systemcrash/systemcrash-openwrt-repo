@@ -1,0 +1,3 @@
+[submodule "luci-app-ptp"]
+	path = luci-app-ptp
+	url = git@github.com:systemcrash/luci-app-ptp.git
