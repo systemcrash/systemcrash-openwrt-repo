@@ -73,7 +73,7 @@ jobs:
           done
           echo PKG_NAMES="$folders" >> "$GITHUB_ENV"
 
-          # Also add a shim so ../../luci.mk from package/feeds/systemcrash/<pkg> works:
+          # Also add a shim so ../../luci.mk from package/feeds/${{ github.actor }}/<pkg> works:
           mkdir -p package
           printf 'include $(TOPDIR)/feeds/luci/luci.mk\n' > package/luci.mk
 
@@ -87,7 +87,7 @@ jobs:
           printf 'include $(TOPDIR)/feeds/luci/luci.mk\n' > feed/luci/luci.mk
 
 
-          # - name: 🧰 Set up systemcrash feed structure
+          # - name: 🧰 Set up ${{ github.actor }} feed structure
           #   run: |
           for pkg in ${folders}; do
             # Create a proper OpenWrt feed layout where each package lives in its own subdir
@@ -112,7 +112,7 @@ jobs:
         uses: openwrt/gh-action-sdk@v8
         env:
           ARCH: ${{ env.ARCH }}
-          FEEDNAME: systemcrash
+          FEEDNAME: ${{ github.actor }}
           PACKAGES: ${{ env.PKG_NAMES }}
           INDEX: 1
           FEED_DIR: ${{ github.workspace }}/feed
@@ -156,12 +156,12 @@ jobs:
           #     ∟ other/directory/foo1.txt
           name: ${{ matrix.target }}-${{ matrix.version }}
           path: |
-            */packages/${{ matrix.target }}/systemcrash/*.ipk
-            */packages/${{ matrix.target }}/systemcrash/*.apk
-            */packages/${{ matrix.target }}/systemcrash/Packages*
-            */packages/${{ matrix.target }}/systemcrash/index.json
-            */packages/${{ matrix.target }}/systemcrash/packages.adb
-            */packages/${{ matrix.target }}/systemcrash/packages.adb.asc
+            */packages/${{ matrix.target }}/${{ github.actor }}/*.ipk
+            */packages/${{ matrix.target }}/${{ github.actor }}/*.apk
+            */packages/${{ matrix.target }}/${{ github.actor }}/Packages*
+            */packages/${{ matrix.target }}/${{ github.actor }}/index.json
+            */packages/${{ matrix.target }}/${{ github.actor }}/packages.adb
+            */packages/${{ matrix.target }}/${{ github.actor }}/packages.adb.asc
           if-no-files-found: ignore
 
   release:
